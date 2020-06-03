@@ -1,0 +1,61 @@
+apiVersion: siddhi.io/v1alpha2
+kind: SiddhiProcess
+metadata: 
+  name: stateful-example-app
+spec: 
+  apps: 
+    - script: |
+        @App:name("StatefulExample")
+        @App:description("Consumes HTTP messages in JSON format, and alerts by logging a message, if sum > 10000 within 1 minute")
+        
+        @source(
+          type='http',
+          basic.auth.enabled='false',
+          receiver.url='${RECEIVER_URL}',
+          @map(type='json')
+        )
+        define stream FaultyUnitsStream(units int);
+        
+        @sink(type='log', prefix='LogStream: ') 
+        define stream LogStream(units int, totalUnits long);
+        
+        @sink(type='log', prefix='FaultyUnitsSpikeAlertStream: ') 
+        define stream FaultyUnitsSpikeAlertStream(totalUnits long); 
+        
+        @info(name='logging-stream')
+        from FaultyUnitsStream
+        select units, sum(units) as totalUnits
+        insert into LogStream;
+        
+        @info(name='spike-detector')
+        from LogStream#window.time(1 min) 
+        select sum(units) as totalUnits
+        having totalUnits > 10000
+        insert into FaultyUnitsSpikeAlertStream;
+  container: 
+    env: 
+      - 
+        name: RECEIVER_URL
+        value: "http://0.0.0.0:8080/statefulExample"
+    image: "siddhiio/siddhi-runner-ubuntu:5.1.2"
+  
+  messagingSystem:
+    type: nats
+  
+  persistentVolumeClaim: 
+    accessModes: 
+      - ReadWriteOnce
+    resources: 
+      requests: 
+        storage: 1Gi
+    storageClassName: standard
+    volumeMode: Filesystem
+  
+  runner: |
+    state.persistence:
+      enabled: true
+      intervalInMin: 1
+      revisionsToKeep: 2
+      persistenceStore: io.siddhi.distribution.core.persistence.FileSystemPersistenceStore
+      config:
+        location: siddhi-app-persistence
